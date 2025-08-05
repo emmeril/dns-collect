@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
@@ -14,67 +13,51 @@ const adguardAuth = {
   password: process.env.ADGUARD_PASSWORD,
 };
 
-// --- Daftar Kata Kunci Domain ---
+// Kata kunci domain
 const domainsSosmed = [
-  "youtube",
-  "ytimg",
-  "fbcdn",
-  "byteoversea",
-  "kwaipros",
-  "facebook",
-  "ksapisrv",
-  "instagram",
-  "akamai",
-  "googlevideo",
-  "lazada",
-  "shopee",
-  "snackvideo",
-  "bukalapak",
-  "tokopedia",
-  "netflix",
-  "twitter",
-  "tiktok",
+  "youtube", "ytimg", "facebook", "instagram", "akamai",
+  "googlevideo", "lazada", "shopee", "snackvideo",
+  "bukalapak", "tokopedia", "netflix", "twitter", "tiktok",
 ];
 
 const domainsBlock = [
-  "speedtest",
-  "xnxx",
-  "vpn",
-  "arcai",
-  "netcut",
-  "xhamster",
-  "javhd",
-  "bokep",
+  "speedtest", "xnxx", "vpn", "arcai", "netcut",
+  "xhamster", "javhd", "bokep",
 ];
 
-async function generateMikrotikScript() {
-  let scriptContent = `# Mikrotik Address-List generated on ${new Date().toISOString()}\n\n`;
+// Baca file lama dan ambil daftar domain yang sudah pernah ditulis
+const getExistingDomains = () => {
+  const filePath = "mikrotik_list.rsc";
+  const existing = new Set();
 
+  if (fs.existsSync(filePath)) {
+    const lines = fs.readFileSync(filePath, "utf-8").split("\n");
+    for (const line of lines) {
+      const match = line.match(/address="([^"]+)"/);
+      if (match) {
+        existing.add(match[1]);
+      }
+    }
+  }
+
+  return existing;
+};
+
+// Fungsi utama
+const generateMikrotikScript = async () => {
   try {
     const response = await axios.get(adguardApiUrl, { auth: adguardAuth });
     const queries = response.data.data;
-    if (!queries || queries.length === 0) {
-      console.log("[INFO] Tidak ada query dari AdGuard.");
-      return;
-    }
-
-    console.log(`[INFO] Jumlah query dari AdGuard: ${queries.length}`);
-
-    const processedDomains = new Set();
+    const processedDomains = getExistingDomains();
+    const possibleDomains = new Set();
 
     for (const query of queries) {
-      if (query.status !== "NOERROR") continue;
-
-      const possibleDomains = new Set();
-
-      // Dari field question.name
       if (query.question?.name) {
         let name = query.question.name;
         if (name.endsWith(".")) name = name.slice(0, -1);
-        possibleDomains.add(name);
+        if (name) possibleDomains.add(name);
       }
 
-      // Dari field answer[] type CNAME
       if (Array.isArray(query.answer)) {
         for (const ans of query.answer) {
           if (ans.type === "CNAME" || ans.type === "A") {
@@ -84,57 +67,45 @@ async function generateMikrotikScript() {
           }
         }
       }
+    }
 
-      // Proses setiap domain yang ditemukan
-      for (const domain of possibleDomains) {
-        if (processedDomains.has(domain)) continue;
+    for (const domain of possibleDomains) {
+      if (processedDomains.has(domain)) continue;
 
-        // Debug: tampilkan domain yang sedang diproses
-        console.log(`[CHECK] ${domain}`);
+      let scriptLine = "";
+      if (domainsSosmed.some((d) => domain.includes(d))) {
+        scriptLine += `:local exists [/ip firewall address-list find address="${domain}" list="Sosmed"]\n`;
+        scriptLine += `:if (\$exists = "") do={ /ip firewall address-list add list="Sosmed" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
+      } else if (domainsBlock.some((d) => domain.includes(d))) {
+        scriptLine += `:local exists [/ip firewall address-list find address="${domain}" list="Block"]\n`;
+        scriptLine += `:if (\$exists = "") do={ /ip firewall address-list add list="Block" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
+      }
 
-        if (domainsSosmed.some((d) => domain.includes(d))) {
-          console.log(`[MATCH] Sosmed: ${domain}`);
-          scriptContent += `:local exists [/ip firewall address-list find address="${domain}" list="Sosmed"]\n`;
-          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="Sosmed" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
-          processedDomains.add(domain);
-        } else if (domainsBlock.some((d) => domain.includes(d))) {
-          console.log(`[MATCH] Block: ${domain}`);
-          scriptContent += `:local exists [/ip firewall address-list find address="${domain}" list="Block"]\n`;
-          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="Block" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
-          processedDomains.add(domain);
-        } else {
-          console.log(`[SKIP] Tidak cocok filter: ${domain}`);
-        }
+      if (scriptLine !== "") {
+        fs.appendFileSync("mikrotik_list.rsc", scriptLine);
+        console.log(`[ADD] ${domain}`);
+        processedDomains.add(domain); // supaya nggak dobel
       }
     }
 
-    // Jika tidak ada domain yang cocok
-    if (processedDomains.size === 0) {
-      scriptContent += `# Tidak ada domain yang cocok dengan filter pada ${new Date().toISOString()}\n`;
-    }
-
-    fs.writeFileSync("mikrotik_list.rsc", scriptContent);
-    console.log(`[SUCCESS] File mikrotik_list.rsc diperbarui (${processedDomains.size} entri)`);
   } catch (error) {
-    console.error(`[ERROR] Gagal mengambil query dari AdGuard: ${error.message}`);
+    console.error(`[Error] Gagal ambil log dari AdGuard: ${error.message}`);
   }
-}
+};
 
-// Interval setiap 1 menit
 setInterval(generateMikrotikScript, intervalTime);
 
-// Endpoint HTTP
+// Endpoint untuk ambil file
 app.get("/mikrotik_list.rsc", (req, res) => {
   if (fs.existsSync("mikrotik_list.rsc")) {
     res.sendFile("mikrotik_list.rsc", { root: "." });
   } else {
-    res.status(404).send("File mikrotik_list.rsc belum dibuat.");
+    res.status(404).send("File belum tersedia. Tunggu proses pertama selesai.");
   }
 });
 
-// Start server
 app.listen(port, () => {
-  console.log(`✅ Express server running at http://localhost:${port}`);
-  console.log("⏳ Menunggu pembaruan awal file mikrotik_list.rsc...");
-  generateMikrotikScript(); // panggil langsung saat start
+  console.log(`Server jalan di http://localhost:${port}`);
+  console.log("Script akan update setiap 1 menit.");
+  generateMikrotikScript(); // langsung jalan di awal
 });
