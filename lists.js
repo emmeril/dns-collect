@@ -18,7 +18,11 @@ const adguardAuth = {
 const domainsSosmed = [
   "youtube",
   "ytimg",
+  "fbcdn",
+  "byteoversea",
+  "kwaipros",
   "facebook",
+  "ksapisrv",
   "instagram",
   "akamai",
   "googlevideo",
