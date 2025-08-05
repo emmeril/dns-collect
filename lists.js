@@ -17,6 +17,7 @@ const adguardAuth = {
 // --- Daftar Kata Kunci Domain ---
 const domainsSosmed = [
   "youtube",
+  "bytetcdn",
   "ytimg",
   "fbcdn",
   "byteoversea",
