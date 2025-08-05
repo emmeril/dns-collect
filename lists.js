@@ -1,16 +1,17 @@
+require('dotenv').config();
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 
 const app = express();
-const port = 8521;
+const port = process.env.SERVER_PORT || 8521;
 const intervalTime = 1 * 60 * 1000; // 1 menit
 
 // --- Konfigurasi AdGuard ---
-const adguardApiUrl = "http://16.20.20.20:2525/control/querylog";
+const adguardApiUrl = process.env.ADGUARD_API_URL;
 const adguardAuth = {
-  username: "Hafri",
-  password: "Loveisproblem@2611",
+  username: process.env.ADGUARD_USERNAME,
+  password: process.env.ADGUARD_PASSWORD,
 };
 
 // --- Daftar Kata Kunci Domain ---
