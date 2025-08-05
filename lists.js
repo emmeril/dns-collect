@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
@@ -16,14 +16,31 @@ const adguardAuth = {
 
 // Kata kunci domain
 const domainsSosmed = [
-  "youtube", "ytimg", "facebook", "instagram", "akamai",
-  "googlevideo", "lazada", "shopee", "snackvideo",
-  "bukalapak", "tokopedia", "netflix", "twitter", "tiktok",
+  "youtube",
+  "ytimg",
+  "facebook",
+  "instagram",
+  "akamai",
+  "googlevideo",
+  "lazada",
+  "shopee",
+  "snackvideo",
+  "bukalapak",
+  "tokopedia",
+  "netflix",
+  "twitter",
+  "tiktok",
 ];
 
 const domainsBlock = [
-  "speedtest", "xnxx", "vpn", "arcai", "netcut",
-  "xhamster", "javhd", "bokep",
+  "speedtest",
+  "xnxx",
+  "vpn",
+  "arcai",
+  "netcut",
+  "xhamster",
+  "javhd",
+  "bokep",
 ];
 
 // Baca file lama dan ambil daftar domain yang sudah pernah ditulis
@@ -53,6 +70,8 @@ const generateMikrotikScript = async () => {
     const possibleDomains = new Set();
 
     for (const query of queries) {
+      if (query.status !== "NOERROR") continue;
+
       if (query.question?.name) {
         let name = query.question.name;
         if (name.endsWith(".")) name = name.slice(0, -1);
@@ -88,7 +107,6 @@ const generateMikrotikScript = async () => {
         processedDomains.add(domain); // supaya nggak dobel
       }
     }
-
   } catch (error) {
     console.error(`[Error] Gagal ambil log dari AdGuard: ${error.message}`);
   }
