@@ -61,61 +61,95 @@ async function generateMikrotikScript() {
 
     console.log(`[INFO] Jumlah query dari AdGuard: ${queries.length}`);
 
+    const processedIps = new Set();
     const processedDomains = new Set();
 
     for (const query of queries) {
       if (query.status !== "NOERROR") continue;
 
-      const possibleDomains = new Set();
+      let matchedList = null;
+      let matchedDomain = null;
 
-      // Dari field question.name
+      // Pertama, cari domain yang cocok dengan kata kunci kita
       if (query.question?.name) {
-        let name = query.question.name;
-        if (name.endsWith(".")) name = name.slice(0, -1);
-        possibleDomains.add(name);
+        let name = query.question.name.endsWith(".") ? query.question.name.slice(0, -1) : query.question.name;
+        if (domainsSosmed.some((d) => name.includes(d))) {
+          matchedList = "Sosmed";
+          matchedDomain = name;
+        } else if (domainsBlock.some((d) => name.includes(d))) {
+          matchedList = "Block";
+          matchedDomain = name;
+        }
       }
 
-      // Dari field answer[] type CNAME
-      if (Array.isArray(query.answer)) {
-        for (const ans of query.answer) {
-          if (ans.type === "CNAME" || ans.type === "A") {
-            let cname = ans.data;
-            if (cname && cname.endsWith(".")) cname = cname.slice(0, -1);
-            if (cname) possibleDomains.add(cname);
+      // Jika domain yang cocok ditemukan, proses alamat IP-nya
+      if (matchedList && matchedDomain) {
+        if (processedDomains.has(matchedDomain)) continue;
+        processedDomains.add(matchedDomain);
+
+        console.log(`[MATCH] ${matchedList}: ${matchedDomain}`);
+
+        if (Array.isArray(query.answer)) {
+          for (const ans of query.answer) {
+            // PERBAIKAN: Menggunakan 'ans.value' yang ada di log Anda
+            if (ans.type === "A" && ans.value) {
+              const ipAddress = ans.value;
+              if (processedIps.has(ipAddress)) continue;
+              
+              console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
+              scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
+              scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00 }\n`;
+              processedIps.add(ipAddress);
+            }
           }
         }
-      }
+      } else {
+          // Jika tidak ada domain yang cocok, periksa CNAME sebagai alternatif
+          if (Array.isArray(query.answer)) {
+              for (const ans of query.answer) {
+                  // PERBAIKAN: Menggunakan 'ans.value' untuk CNAME
+                  if (ans.type === "CNAME" && ans.value) {
+                      let cname = ans.value.endsWith(".") ? ans.value.slice(0, -1) : ans.value;
+                      if (domainsSosmed.some((d) => cname.includes(d))) {
+                          matchedList = "Sosmed";
+                          matchedDomain = cname;
+                          break;
+                      } else if (domainsBlock.some((d) => cname.includes(d))) {
+                          matchedList = "Block";
+                          matchedDomain = cname;
+                          break;
+                      }
+                  }
+              }
 
-      // Proses setiap domain yang ditemukan
-      for (const domain of possibleDomains) {
-        if (processedDomains.has(domain)) continue;
+              // Jika CNAME cocok, proses IP dari query asli (atau A records di jawaban)
+              if (matchedList && matchedDomain && !processedDomains.has(matchedDomain)) {
+                  processedDomains.add(matchedDomain);
+                  console.log(`[MATCH] (via CNAME) ${matchedList}: ${matchedDomain}`);
+                  for (const ans of query.answer) {
+                      // PERBAIKAN: Menggunakan 'ans.value' untuk IP
+                      if (ans.type === "A" && ans.value) {
+                          const ipAddress = ans.value;
+                          if (processedIps.has(ipAddress)) continue;
 
-        // Debug: tampilkan domain yang sedang diproses
-        console.log(`[CHECK] ${domain}`);
-
-        if (domainsSosmed.some((d) => domain.includes(d))) {
-          console.log(`[MATCH] Sosmed: ${domain}`);
-          scriptContent += `:local exists [/ip firewall address-list find address="${domain}" list="Sosmed"]\n`;
-          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="Sosmed" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
-          processedDomains.add(domain);
-        } else if (domainsBlock.some((d) => domain.includes(d))) {
-          console.log(`[MATCH] Block: ${domain}`);
-          scriptContent += `:local exists [/ip firewall address-list find address="${domain}" list="Block"]\n`;
-          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="Block" address="${domain}" comment="${domain}" timeout=1d00:00:00 }\n`;
-          processedDomains.add(domain);
-        } else {
-          console.log(`[SKIP] Tidak cocok filter: ${domain}`);
-        }
+                          console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
+                          scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
+                          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00 }\n`;
+                          processedIps.add(ipAddress);
+                      }
+                  }
+              }
+          }
       }
     }
 
-    // Jika tidak ada domain yang cocok
-    if (processedDomains.size === 0) {
-      scriptContent += `# Tidak ada domain yang cocok dengan filter pada ${new Date().toISOString()}\n`;
+    // Jika tidak ada IP yang ditambahkan
+    if (processedIps.size === 0) {
+      scriptContent += `# Tidak ada IP yang cocok dengan filter pada ${new Date().toISOString()}\n`;
     }
 
     fs.writeFileSync("mikrotik_list.rsc", scriptContent);
-    console.log(`[SUCCESS] File mikrotik_list.rsc diperbarui (${processedDomains.size} entri)`);
+    console.log(`[SUCCESS] File mikrotik_list.rsc diperbarui (${processedIps.size} entri)`);
   } catch (error) {
     console.error(`[ERROR] Gagal mengambil query dari AdGuard: ${error.message}`);
   }
@@ -133,7 +167,7 @@ app.get("/mikrotik_list.rsc", (req, res) => {
   }
 });
 
-// Start server
+// Jalankan server
 app.listen(port, () => {
   console.log(`✅ Express server running at http://localhost:${port}`);
   console.log("⏳ Menunggu pembaruan awal file mikrotik_list.rsc...");
