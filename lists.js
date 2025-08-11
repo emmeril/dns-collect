@@ -72,7 +72,9 @@ async function generateMikrotikScript() {
 
       // Pertama, cari domain yang cocok dengan kata kunci kita
       if (query.question?.name) {
-        let name = query.question.name.endsWith(".") ? query.question.name.slice(0, -1) : query.question.name;
+        let name = query.question.name.endsWith(".")
+          ? query.question.name.slice(0, -1)
+          : query.question.name;
         if (domainsSosmed.some((d) => name.includes(d))) {
           matchedList = "Sosmed";
           matchedDomain = name;
@@ -95,51 +97,57 @@ async function generateMikrotikScript() {
             if (ans.type === "A" && ans.value) {
               const ipAddress = ans.value;
               if (processedIps.has(ipAddress)) continue;
-              
+
               console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
               scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
-              scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00 }\n`;
+              scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}"}\n`;
               processedIps.add(ipAddress);
             }
           }
         }
       } else {
-          // Jika tidak ada domain yang cocok, periksa CNAME sebagai alternatif
-          if (Array.isArray(query.answer)) {
-              for (const ans of query.answer) {
-                  // PERBAIKAN: Menggunakan 'ans.value' untuk CNAME
-                  if (ans.type === "CNAME" && ans.value) {
-                      let cname = ans.value.endsWith(".") ? ans.value.slice(0, -1) : ans.value;
-                      if (domainsSosmed.some((d) => cname.includes(d))) {
-                          matchedList = "Sosmed";
-                          matchedDomain = cname;
-                          break;
-                      } else if (domainsBlock.some((d) => cname.includes(d))) {
-                          matchedList = "Block";
-                          matchedDomain = cname;
-                          break;
-                      }
-                  }
+        // Jika tidak ada domain yang cocok, periksa CNAME sebagai alternatif
+        if (Array.isArray(query.answer)) {
+          for (const ans of query.answer) {
+            // PERBAIKAN: Menggunakan 'ans.value' untuk CNAME
+            if (ans.type === "CNAME" && ans.value) {
+              let cname = ans.value.endsWith(".")
+                ? ans.value.slice(0, -1)
+                : ans.value;
+              if (domainsSosmed.some((d) => cname.includes(d))) {
+                matchedList = "Sosmed";
+                matchedDomain = cname;
+                break;
+              } else if (domainsBlock.some((d) => cname.includes(d))) {
+                matchedList = "Block";
+                matchedDomain = cname;
+                break;
               }
-
-              // Jika CNAME cocok, proses IP dari query asli (atau A records di jawaban)
-              if (matchedList && matchedDomain && !processedDomains.has(matchedDomain)) {
-                  processedDomains.add(matchedDomain);
-                  console.log(`[MATCH] (via CNAME) ${matchedList}: ${matchedDomain}`);
-                  for (const ans of query.answer) {
-                      // PERBAIKAN: Menggunakan 'ans.value' untuk IP
-                      if (ans.type === "A" && ans.value) {
-                          const ipAddress = ans.value;
-                          if (processedIps.has(ipAddress)) continue;
-
-                          console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
-                          scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
-                          scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00 }\n`;
-                          processedIps.add(ipAddress);
-                      }
-                  }
-              }
+            }
           }
+
+          // Jika CNAME cocok, proses IP dari query asli (atau A records di jawaban)
+          if (
+            matchedList &&
+            matchedDomain &&
+            !processedDomains.has(matchedDomain)
+          ) {
+            processedDomains.add(matchedDomain);
+            console.log(`[MATCH] (via CNAME) ${matchedList}: ${matchedDomain}`);
+            for (const ans of query.answer) {
+              // PERBAIKAN: Menggunakan 'ans.value' untuk IP
+              if (ans.type === "A" && ans.value) {
+                const ipAddress = ans.value;
+                if (processedIps.has(ipAddress)) continue;
+
+                console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
+                scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
+                scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}"}\n`;
+                processedIps.add(ipAddress);
+              }
+            }
+          }
+        }
       }
     }
 
@@ -149,9 +157,13 @@ async function generateMikrotikScript() {
     }
 
     fs.writeFileSync("mikrotik_list.rsc", scriptContent);
-    console.log(`[SUCCESS] File mikrotik_list.rsc diperbarui (${processedIps.size} entri)`);
+    console.log(
+      `[SUCCESS] File mikrotik_list.rsc diperbarui (${processedIps.size} entri)`
+    );
   } catch (error) {
-    console.error(`[ERROR] Gagal mengambil query dari AdGuard: ${error.message}`);
+    console.error(
+      `[ERROR] Gagal mengambil query dari AdGuard: ${error.message}`
+    );
   }
 }
 
