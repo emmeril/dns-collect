@@ -100,7 +100,7 @@ async function generateMikrotikScript() {
 
               console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
               scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
-              scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}"}\n`;
+              scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00}\n`;
               processedIps.add(ipAddress);
             }
           }
@@ -142,7 +142,7 @@ async function generateMikrotikScript() {
 
                 console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
                 scriptContent += `:local exists [/ip firewall address-list find address="${ipAddress}" list="${matchedList}"]\n`;
-                scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}"}\n`;
+                scriptContent += `:if (\$exists = "") do={ /ip firewall address-list add list="${matchedList}" address="${ipAddress}" comment="${matchedDomain}" timeout=1d00:00:00}\n`;
                 processedIps.add(ipAddress);
               }
             }
