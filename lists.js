@@ -8,9 +8,14 @@ const app = express();
 const port = Number(process.env.SERVER_PORT) || 8521;
 const intervalTime = 60 * 1000; // 1 menit
 const outputFile = path.join(__dirname, "mikrotik_list.rsc");
+const emittedCacheFile = path.join(__dirname, ".mikrotik_emitted_cache.json");
 const commentPrefix = "dns-collect:";
+const addressListTimeout = "01:00:00";
+const addressListTimeoutMs = 60 * 60 * 1000;
 
 let isGenerating = false;
+let pendingEntries = [];
+const recentlyEmittedEntries = new Map();
 
 // --- Konfigurasi AdGuard ---
 const adguardApiUrl = process.env.ADGUARD_API_URL;
@@ -109,14 +114,52 @@ function buildAddressListEntry({ ipAddress, listName, domain }) {
   const safeListName = escapeMikrotikValue(listName);
   const safeComment = escapeMikrotikValue(`${commentPrefix}${domain}`);
 
-  return `/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=01:00:00`;
+  return `/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=${addressListTimeout}`;
 }
 
-function buildAddressListCleanup(listName) {
-  const safeListName = escapeMikrotikValue(listName);
-  const safeCommentPrefix = escapeMikrotikValue(`^${commentPrefix}`);
+function buildEntryKey(listName, ipAddress) {
+  return `${listName}:${ipAddress}`;
+}
 
-  return `/ip firewall address-list remove [find list="${safeListName}" comment~"${safeCommentPrefix}"]`;
+function pruneRecentlyEmittedEntries(now) {
+  for (const [entryKey, expiresAt] of recentlyEmittedEntries) {
+    if (expiresAt <= now) {
+      recentlyEmittedEntries.delete(entryKey);
+    }
+  }
+}
+
+function loadRecentlyEmittedEntries() {
+  if (!fs.existsSync(emittedCacheFile)) return;
+
+  try {
+    const cache = JSON.parse(fs.readFileSync(emittedCacheFile, "utf8"));
+    const now = Date.now();
+
+    for (const [entryKey, expiresAt] of Object.entries(cache)) {
+      if (Number(expiresAt) > now) {
+        recentlyEmittedEntries.set(entryKey, Number(expiresAt));
+      }
+    }
+  } catch (error) {
+    console.warn(`[WARN] Cache IP lama tidak bisa dibaca: ${error.message}`);
+  }
+}
+
+function saveRecentlyEmittedEntries() {
+  const cache = Object.fromEntries(recentlyEmittedEntries);
+  fs.writeFileSync(emittedCacheFile, JSON.stringify(cache, null, 2));
+}
+
+function markEntriesAsEmitted(entries, now) {
+  for (const entry of entries) {
+    recentlyEmittedEntries.set(
+      buildEntryKey(entry.listName, entry.ipAddress),
+      now + addressListTimeoutMs
+    );
+  }
+
+  saveRecentlyEmittedEntries();
 }
 
 async function generateMikrotikScript() {
@@ -144,10 +187,11 @@ async function generateMikrotikScript() {
 
     console.log(`[INFO] Jumlah query dari AdGuard: ${queries.length}`);
 
+    const now = Date.now();
     const entries = [];
     const processedEntries = new Set();
-    const usedLists = new Set();
     const loggedDomains = new Set();
+    pruneRecentlyEmittedEntries(now);
 
     for (const query of queries) {
       if (query.status !== "NOERROR") continue;
@@ -163,8 +207,11 @@ async function generateMikrotikScript() {
       }
 
       for (const ipAddress of getAnswerIps(query)) {
-        const entryKey = `${match.listName}:${ipAddress}`;
+        const entryKey = buildEntryKey(match.listName, ipAddress);
         if (processedEntries.has(entryKey)) continue;
+        processedEntries.add(entryKey);
+
+        if (recentlyEmittedEntries.has(entryKey)) continue;
 
         console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
         entries.push({
@@ -172,20 +219,13 @@ async function generateMikrotikScript() {
           listName: match.listName,
           domain: match.domain,
         });
-        processedEntries.add(entryKey);
-        usedLists.add(match.listName);
       }
     }
 
-    if (processedEntries.size === 0) {
-      scriptContent += `# Tidak ada IP yang cocok dengan filter pada ${new Date().toISOString()}\n`;
+    if (entries.length === 0) {
+      scriptContent += `# Tidak ada IP baru untuk ditambahkan pada ${new Date().toISOString()}\n`;
     } else {
-      scriptContent += `# Bersihkan entry dns-collect lama sekali per list agar import ringan di CPU\n`;
-      for (const listName of [...usedLists].sort()) {
-        scriptContent += `${buildAddressListCleanup(listName)}\n`;
-      }
-
-      scriptContent += `\n# Tambahkan address-list baru tanpa find per IP\n`;
+      scriptContent += `# Tambahkan hanya IP baru; entry lama dibiarkan expire oleh timeout MikroTik\n`;
       for (const entry of entries.sort((a, b) =>
         `${a.listName}:${a.ipAddress}`.localeCompare(`${b.listName}:${b.ipAddress}`)
       )) {
@@ -194,8 +234,9 @@ async function generateMikrotikScript() {
     }
 
     fs.writeFileSync(outputFile, scriptContent);
+    pendingEntries = entries;
     console.log(
-      `[SUCCESS] File mikrotik_list.rsc diperbarui (${processedEntries.size} entri)`
+      `[SUCCESS] File mikrotik_list.rsc diperbarui (${entries.length} entri baru)`
     );
   } catch (error) {
     console.error(
@@ -212,7 +253,20 @@ setInterval(generateMikrotikScript, intervalTime);
 // Endpoint HTTP
 app.get("/mikrotik_list.rsc", (req, res) => {
   if (fs.existsSync(outputFile)) {
-    res.sendFile(outputFile);
+    const entriesToMark = pendingEntries;
+    res.sendFile(outputFile, (error) => {
+      if (error) {
+        console.error(`[ERROR] Gagal mengirim file Mikrotik: ${error.message}`);
+        if (!res.headersSent) {
+          res.status(error.statusCode || 500).send("Gagal mengirim file Mikrotik.");
+        }
+        return;
+      }
+
+      if (entriesToMark.length > 0) {
+        markEntriesAsEmitted(entriesToMark, Date.now());
+      }
+    });
   } else {
     res.status(404).send("File mikrotik_list.rsc belum dibuat.");
   }
@@ -222,5 +276,6 @@ app.get("/mikrotik_list.rsc", (req, res) => {
 app.listen(port, () => {
   console.log(`Express server running at http://localhost:${port}`);
   console.log("Menunggu pembaruan awal file mikrotik_list.rsc...");
+  loadRecentlyEmittedEntries();
   generateMikrotikScript();
 });
