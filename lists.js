@@ -14,7 +14,11 @@ const addressListTimeout = "01:00:00";
 const addressListTimeoutMs = 60 * 60 * 1000;
 
 let isGenerating = false;
-let pendingEntries = [];
+let outputState = {
+  batchId: 0,
+  pendingEntries: [],
+  scriptContent: null,
+};
 const recentlyEmittedEntries = new Map();
 
 // --- Konfigurasi AdGuard ---
@@ -121,6 +125,12 @@ function buildEntryKey(listName, ipAddress) {
   return `${listName}:${ipAddress}`;
 }
 
+function atomicWriteFileSync(filePath, content) {
+  const tempFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempFile, content);
+  fs.renameSync(tempFile, filePath);
+}
+
 function pruneRecentlyEmittedEntries(now) {
   for (const [entryKey, expiresAt] of recentlyEmittedEntries) {
     if (expiresAt <= now) {
@@ -148,15 +158,18 @@ function loadRecentlyEmittedEntries() {
 
 function saveRecentlyEmittedEntries() {
   const cache = Object.fromEntries(recentlyEmittedEntries);
-  fs.writeFileSync(emittedCacheFile, JSON.stringify(cache, null, 2));
+  atomicWriteFileSync(emittedCacheFile, JSON.stringify(cache, null, 2));
 }
 
 function markEntriesAsEmitted(entries, now) {
   for (const entry of entries) {
-    recentlyEmittedEntries.set(
-      buildEntryKey(entry.listName, entry.ipAddress),
-      now + addressListTimeoutMs
-    );
+    const entryKey = buildEntryKey(entry.listName, entry.ipAddress);
+    const expiresAt = now + addressListTimeoutMs;
+    const currentExpiresAt = recentlyEmittedEntries.get(entryKey) || 0;
+
+    if (!currentExpiresAt) {
+      recentlyEmittedEntries.set(entryKey, expiresAt);
+    }
   }
 
   saveRecentlyEmittedEntries();
@@ -233,8 +246,12 @@ async function generateMikrotikScript() {
       }
     }
 
-    fs.writeFileSync(outputFile, scriptContent);
-    pendingEntries = entries;
+    atomicWriteFileSync(outputFile, scriptContent);
+    outputState = {
+      batchId: outputState.batchId + 1,
+      pendingEntries: entries,
+      scriptContent,
+    };
     console.log(
       `[SUCCESS] File mikrotik_list.rsc diperbarui (${entries.length} entri baru)`
     );
@@ -252,24 +269,33 @@ setInterval(generateMikrotikScript, intervalTime);
 
 // Endpoint HTTP
 app.get("/mikrotik_list.rsc", (req, res) => {
-  if (fs.existsSync(outputFile)) {
-    const entriesToMark = pendingEntries;
-    res.sendFile(outputFile, (error) => {
-      if (error) {
-        console.error(`[ERROR] Gagal mengirim file Mikrotik: ${error.message}`);
-        if (!res.headersSent) {
-          res.status(error.statusCode || 500).send("Gagal mengirim file Mikrotik.");
-        }
-        return;
-      }
+  const sentState = outputState;
 
-      if (entriesToMark.length > 0) {
-        markEntriesAsEmitted(entriesToMark, Date.now());
-      }
-    });
-  } else {
+  if (!sentState.scriptContent && !fs.existsSync(outputFile)) {
     res.status(404).send("File mikrotik_list.rsc belum dibuat.");
+    return;
   }
+
+  const scriptContent =
+    sentState.scriptContent || fs.readFileSync(outputFile, "utf8");
+  const entriesToMark = sentState.pendingEntries;
+
+  res.on("finish", () => {
+    if (res.statusCode >= 400 || entriesToMark.length === 0) return;
+
+    markEntriesAsEmitted(entriesToMark, Date.now());
+
+    if (outputState.batchId === sentState.batchId) {
+      outputState = {
+        ...outputState,
+        pendingEntries: [],
+      };
+    }
+  });
+
+  res
+    .type("text/plain")
+    .send(scriptContent);
 });
 
 // Jalankan server
