@@ -8,6 +8,7 @@ const app = express();
 const port = Number(process.env.SERVER_PORT) || 8521;
 const intervalTime = 60 * 1000; // 1 menit
 const outputFile = path.join(__dirname, "mikrotik_list.rsc");
+const commentPrefix = "dns-collect:";
 
 let isGenerating = false;
 
@@ -106,12 +107,16 @@ function escapeMikrotikValue(value) {
 function buildAddressListEntry({ ipAddress, listName, domain }) {
   const safeIpAddress = escapeMikrotikValue(ipAddress);
   const safeListName = escapeMikrotikValue(listName);
-  const safeDomain = escapeMikrotikValue(domain);
+  const safeComment = escapeMikrotikValue(`${commentPrefix}${domain}`);
 
-  return [
-    `:local exists [/ip firewall address-list find address="${safeIpAddress}" list="${safeListName}"]`,
-    `:if ($exists = "") do={ /ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeDomain}" timeout=01:00:00}`,
-  ].join("\n");
+  return `/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=01:00:00`;
+}
+
+function buildAddressListCleanup(listName) {
+  const safeListName = escapeMikrotikValue(listName);
+  const safeCommentPrefix = escapeMikrotikValue(`^${commentPrefix}`);
+
+  return `/ip firewall address-list remove [find list="${safeListName}" comment~"${safeCommentPrefix}"]`;
 }
 
 async function generateMikrotikScript() {
@@ -139,7 +144,9 @@ async function generateMikrotikScript() {
 
     console.log(`[INFO] Jumlah query dari AdGuard: ${queries.length}`);
 
+    const entries = [];
     const processedEntries = new Set();
+    const usedLists = new Set();
     const loggedDomains = new Set();
 
     for (const query of queries) {
@@ -160,17 +167,30 @@ async function generateMikrotikScript() {
         if (processedEntries.has(entryKey)) continue;
 
         console.log(`  [IP FOUND] Menambahkan IP: ${ipAddress}`);
-        scriptContent += `${buildAddressListEntry({
+        entries.push({
           ipAddress,
           listName: match.listName,
           domain: match.domain,
-        })}\n`;
+        });
         processedEntries.add(entryKey);
+        usedLists.add(match.listName);
       }
     }
 
     if (processedEntries.size === 0) {
       scriptContent += `# Tidak ada IP yang cocok dengan filter pada ${new Date().toISOString()}\n`;
+    } else {
+      scriptContent += `# Bersihkan entry dns-collect lama sekali per list agar import ringan di CPU\n`;
+      for (const listName of [...usedLists].sort()) {
+        scriptContent += `${buildAddressListCleanup(listName)}\n`;
+      }
+
+      scriptContent += `\n# Tambahkan address-list baru tanpa find per IP\n`;
+      for (const entry of entries.sort((a, b) =>
+        `${a.listName}:${a.ipAddress}`.localeCompare(`${b.listName}:${b.ipAddress}`)
+      )) {
+        scriptContent += `${buildAddressListEntry(entry)}\n`;
+      }
     }
 
     fs.writeFileSync(outputFile, scriptContent);
