@@ -12,6 +12,7 @@ const emittedCacheFile = path.join(__dirname, ".mikrotik_emitted_cache.json");
 const commentPrefix = "dns-collect:";
 const addressListTimeout = "01:00:00";
 const addressListTimeoutMs = 60 * 60 * 1000;
+const adguardRequestTimeoutMs = Number(process.env.ADGUARD_REQUEST_TIMEOUT_MS) || 15000;
 
 let isGenerating = false;
 let outputState = {
@@ -69,7 +70,8 @@ const domainLists = [
 
 function normalizeDomain(domain) {
   if (!domain) return "";
-  return domain.endsWith(".") ? domain.slice(0, -1) : domain;
+  const normalized = domain.endsWith(".") ? domain.slice(0, -1) : domain;
+  return normalized.toLowerCase();
 }
 
 function matchDomain(domain) {
@@ -190,7 +192,10 @@ async function generateMikrotikScript() {
   let scriptContent = `# Mikrotik Address-List generated on ${new Date().toISOString()}\n\n`;
 
   try {
-    const response = await axios.get(adguardApiUrl, { auth: adguardAuth });
+    const response = await axios.get(adguardApiUrl, {
+      auth: adguardAuth,
+      timeout: adguardRequestTimeoutMs,
+    });
     const queries = response.data?.data;
 
     if (!queries || queries.length === 0) {
@@ -283,7 +288,12 @@ app.get("/mikrotik_list.rsc", (req, res) => {
   res.on("finish", () => {
     if (res.statusCode >= 400 || entriesToMark.length === 0) return;
 
-    markEntriesAsEmitted(entriesToMark, Date.now());
+    try {
+      markEntriesAsEmitted(entriesToMark, Date.now());
+    } catch (error) {
+      console.error(`[ERROR] Cache IP lama tidak bisa disimpan: ${error.message}`);
+      return;
+    }
 
     if (outputState.batchId === sentState.batchId) {
       outputState = {
