@@ -55,12 +55,24 @@ const domainsSosmed = [
 const domainsBlock = [
   "speedtest",
   "xnxx",
+  "porn",
   "vpn",
   "arcai",
   "netcut",
   "xhamster",
   "javhd",
   "bokep",
+  "hentai",
+  "nhentai",
+  "hanime",
+  "rule34",
+  "redtube",
+  "youporn",
+  "pornhub",
+  "xvideos",
+  "youjizz",
+  "spankbang",
+  "tube8",
 ];
 
 const domainLists = [
