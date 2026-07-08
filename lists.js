@@ -63,6 +63,7 @@ const domainsBlock = [
   "javhd",
   "bokep",
   "hentai",
+  "nekopoi",
   "nhentai",
   "hanime",
   "rule34",
