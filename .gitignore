@@ -1,5 +1,7 @@
 node_modules/
 pnpm-lock.yaml
+yarn.lock
 mikrotik_list.rsc
 .mikrotik_emitted_cache.json
+.dns_collect_state.json
 .env
