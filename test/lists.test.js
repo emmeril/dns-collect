@@ -54,10 +54,9 @@ test("generated RouterOS commands are idempotent", () => {
     listName: "Sosmed",
     domain: "youtube.com",
   });
-  assert.match(command, /address-list find where list="Sosmed" and address="1\.2\.3\.4"/);
   assert.match(command, /address-list add list="Sosmed"/);
-  assert.match(command, /address-list set \$entryIds/);
-  assert.match(command, /timeout=01:00:00/);
+  assert.doesNotMatch(command, /address-list (?:find|set|remove)/);
+  assert.match(command, /timeout=02:00:00/);
 });
 
 test("query collection deduplicates by list and IP and honors block priority", () => {

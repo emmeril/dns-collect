@@ -12,7 +12,9 @@ const DEFAULT_POLL_INTERVAL_MS = 60 * 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15 * 1000;
 const DEFAULT_ADDRESS_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
-const ADDRESS_LIST_TIMEOUT = "01:00:00";
+// Keep RouterOS entries alive longer than the one-hour delivery cache so a
+// fresh delta can arrive before the previous entry expires.
+const ADDRESS_LIST_TIMEOUT = "02:00:00";
 const COMMENT_PREFIX = "dns-collect:";
 
 const domainsSosmed = [
@@ -195,7 +197,7 @@ function buildAddressListEntry({ ipAddress, listName, domain }) {
   const safeIpAddress = escapeMikrotikValue(ipAddress);
   const safeListName = escapeMikrotikValue(listName);
   const safeComment = escapeMikrotikValue(`${COMMENT_PREFIX}${domain}`);
-  return `:local entryIds [/ip firewall address-list find where list="${safeListName}" and address="${safeIpAddress}"]; :if ([:len \$entryIds] = 0) do={ /ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=${ADDRESS_LIST_TIMEOUT} } else={ /ip firewall address-list set \$entryIds comment="${safeComment}" timeout=${ADDRESS_LIST_TIMEOUT} }`;
+  return `/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=${ADDRESS_LIST_TIMEOUT}`;
 }
 
 function buildEntryKey(listName, ipAddress) {
