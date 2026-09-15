@@ -197,7 +197,7 @@ function buildAddressListEntry({ ipAddress, listName, domain }) {
   const safeIpAddress = escapeMikrotikValue(ipAddress);
   const safeListName = escapeMikrotikValue(listName);
   const safeComment = escapeMikrotikValue(`${COMMENT_PREFIX}${domain}`);
-  return `/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=${ADDRESS_LIST_TIMEOUT}`;
+  return `:do {/ip firewall address-list add list="${safeListName}" address="${safeIpAddress}" comment="${safeComment}" timeout=${ADDRESS_LIST_TIMEOUT}} on-error={}`;
 }
 
 function buildEntryKey(listName, ipAddress) {

@@ -54,7 +54,9 @@ test("generated RouterOS commands are idempotent", () => {
     listName: "Sosmed",
     domain: "youtube.com",
   });
+  assert.match(command, /^:do \{/);
   assert.match(command, /address-list add list="Sosmed"/);
+  assert.match(command, /} on-error=\{}$/);
   assert.doesNotMatch(command, /address-list (?:find|set|remove)/);
   assert.match(command, /timeout=02:00:00/);
 });
